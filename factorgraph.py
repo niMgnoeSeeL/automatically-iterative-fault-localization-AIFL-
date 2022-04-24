@@ -152,7 +152,7 @@ class FactorGraph:
         if debug:
             pp.pprint(message_dict)
 
-        converge = False
+        converge_cnt = 0
         marginal_probs = {var: -1 for var in self.variables}
         for iter in range(max_iter):
             # if debug:  # print iteration
@@ -163,12 +163,12 @@ class FactorGraph:
             new_marginal_probs = self.calc_marginal_probs(message_dict)
             if debug:
                 pp.pprint(new_marginal_probs)
-            # if marginal_probs == new_marginal_probs:
-            #     converge = True
-            #     break
-            # else:
+            if marginal_probs == new_marginal_probs:
+                converge_cnt += 1
+                if converge_cnt >= 2:
+                    break
             marginal_probs = new_marginal_probs
-        if not converge:
+        if converge_cnt < 2:
             print(f"Warning: max iteration reached: {max_iter}")
         else:
             print(f"Converge after {iter} iterations")
