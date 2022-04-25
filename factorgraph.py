@@ -1,7 +1,9 @@
 import itertools
 import pprint
 import re
+import time
 from typing import List
+import sys
 
 import numpy as np
 
@@ -103,6 +105,14 @@ class FactorGraph:
         self.variables = variables
         self.factors = factors
 
+    @property
+    def size(self):
+        return len(self.variables)
+
+    @property
+    def size_factor(self):
+        return len(self.factors)
+
     def add_variable(self, variable_node: VariableNode):
         self.variables.append(variable_node)
 
@@ -119,12 +129,30 @@ class FactorGraph:
         cnt_unfixed_var = len([var for var in self.variables if not var.fixed])
         best_prob = 0
         best_val_vec = None
-        for val_vec in itertools.product([0, 1], repeat=cnt_unfixed_var):
+        print("inference_exhaustive")
+        num_cases = 2 ** cnt_unfixed_var
+        print("num cases:", num_cases)
+        batch_size = 1000
+        time_previous = []
+        for idx, val_vec in enumerate(
+            itertools.product([0, 1], repeat=cnt_unfixed_var)
+        ):
+            start_time = time.time()
             self.assign_vals(val_vec)
             prob = self.calc_prob(scope)
             if prob > best_prob:
                 best_prob = prob
                 best_val_vec = val_vec
+            time_taken = time.time() - start_time
+            time_previous.append(time_taken)
+            if idx % batch_size == 0 and idx:
+                avg_time = np.mean(time_previous)
+                print(
+                    f"{idx} cases done ({(idx + 1)/ num_cases * 100}%), avg time: {avg_time}",
+                    end="\r",
+                    flush=True,
+                )
+                time_previous = []
         self.assign_vals(best_val_vec)
         self.assign_prob(scope)
         self.best_prob = best_prob
@@ -148,26 +176,44 @@ class FactorGraph:
 
     def marginal_sum_product(self, scope=None, debug=False):
         max_iter = 100
+        if debug:
+            start_time = time.time()
         message_dict = self.get_message_dict()
         if debug:
-            pp.pprint(message_dict)
+            print(
+                f"Initialize meesage dict (time : {time.time() - start_time}, memory: {sys.getsizeof(message_dict)} bytes)"
+            )
+            start_time = time.time()
 
         converge_cnt = 0
         marginal_probs = {var: -1 for var in self.variables}
+        if debug:
+            avg_iter_time = []
         for iter in range(max_iter):
             # if debug:  # print iteration
-            print(f"iteration {iter}")
-            message_dict = self.update_message_dict(message_dict, scope)
+            print(f"iteration {iter + 1} starts")
             if debug:
-                pp.pprint(message_dict)
+                iter_start_time = time.time()
+            message_dict = self.update_message_dict(message_dict, scope, debug)
+            if debug:
+                print(
+                    f"update message dict (time : {time.time() - iter_start_time}"
+                )
+                probcalc_start_time = time.time()
             new_marginal_probs = self.calc_marginal_probs(message_dict)
             if debug:
-                pp.pprint(new_marginal_probs)
+                print(
+                    f"calc marginal probs (time : {time.time() - probcalc_start_time}"
+                )
+                print(f"iter took {time.time() - iter_start_time} seconds")
+                avg_iter_time.append(time.time() - iter_start_time)
             if marginal_probs == new_marginal_probs:
                 converge_cnt += 1
                 if converge_cnt >= 2:
                     break
             marginal_probs = new_marginal_probs
+        if debug:
+            print(f"avg iter time: {np.mean(avg_iter_time)}")
         if converge_cnt < 2:
             print(f"Warning: max iteration reached: {max_iter}")
         else:
@@ -205,11 +251,14 @@ class FactorGraph:
                     v2f_message[var][factor] = (0.5, 0.5)
             return {"v2f": v2f_message, "f2v": f2v_message}
 
-    def update_message_dict(self, message_dict, scope=None):
+    def update_message_dict(self, message_dict, scope, debug):
         new_message_dict = self.get_message_dict()
         old_v2f_message = message_dict["v2f"]
         old_f2v_message = message_dict["f2v"]
-        for v in old_v2f_message:
+        if debug:
+            start_time = time.time()
+            print("v2f message start...")
+        for idx, v in enumerate(old_v2f_message, start=1):
             vdict = old_v2f_message[v]
             for f in vdict:
                 if fstars := set(vdict.keys()) - {f}:
@@ -226,10 +275,27 @@ class FactorGraph:
                 else:
                     # uniform distribution
                     new_message_dict["v2f"][v][f] = (0.5, 0.5)
-        for f in old_f2v_message:
+            if debug:
+                print(
+                    f"{idx} var2facs done ({idx/ len(old_v2f_message) * 100:.2f}%)",
+                    end="\r",
+                    flush=True,
+                )
+        if debug:
+            print(f"v2f message done (time : {time.time() - start_time})")
+            start_time = time.time()
+            print("f2v message start...")
+        for idx, f in enumerate(old_f2v_message, start=1):
             fdict = old_f2v_message[f]
             for v in fdict:
+                # if is_write_iter: print(f"{(f, v)}", end="\r", flush=True)
                 if not (vstars := set(fdict.keys()) - {v}):
+                    if debug:
+                        print(
+                            f"{idx - 1} fac2vars done... ({(idx - 1)/ len(old_f2v_message) * 100}%)\n{(f, v)} ing... no vstar",
+                            end="\r",
+                            flush=True,
+                        )
                     v.val = 0
                     prob_0 = f.calc_prob(self.variables, scope)
                     v.val = 1
@@ -237,11 +303,17 @@ class FactorGraph:
                     new_message_dict["f2v"][f][v] = (prob_0, prob_1)
                 else:
                     message = []
+                    vstars_unfixed = [
+                        vstar for vstar in vstars if not vstar.fixed
+                    ]
+                    if debug:
+                        print(
+                            f"{idx - 1} fac2vars done... ({(idx - 1)/ len(old_f2v_message) * 100}%)\n{(f, v)} ing... star cases = {2 ** len(vstars_unfixed)}",
+                            end="\r",
+                            flush=True,
+                        )
                     for vval in [0, 1]:
                         v.val, prob = vval, 0
-                        vstars_unfixed = [
-                            vstar for vstar in vstars if not vstar.fixed
-                        ]
                         for val_vec in itertools.product(
                             [0, 1], repeat=len(vstars_unfixed)
                         ):
@@ -257,6 +329,14 @@ class FactorGraph:
                     new_message_dict["f2v"][f][v] = tuple(
                         p / sum_message for p in message
                     )
+            # if is_write_iter:
+            #     print(
+            #         f"{idx - 1} fac2vars done... ({(idx - 1)/ len(old_f2v_message) * 100}%)\n{(f, v)} ing... star cases = {2 ** len(vstars_unfixed)}",
+            #         end="\r",
+            #         flush=True,
+            #     )
+        if debug:
+            print(f"f2v message done (time : {time.time() - start_time})")
         return new_message_dict
 
     def calc_marginal_probs(self, message_dict):

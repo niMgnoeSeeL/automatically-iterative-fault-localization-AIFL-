@@ -1,0 +1,22 @@
+{
+    "pid": "Math",
+    "vid": 100,
+    "fault_idxs": [
+        [
+            "org.apache.commons.math.estimation.AbstractEstimator$getCovariances<Lorg/apache/commons/math/estimation/EstimationProblem;>",
+            "166"
+        ],
+        [
+            "org.apache.commons.math.estimation.AbstractEstimator$guessParametersErrors<Lorg/apache/commons/math/estimation/EstimationProblem;>",
+            "202"
+        ],
+        [
+            "org.apache.commons.math.estimation.AbstractEstimator$guessParametersErrors<Lorg/apache/commons/math/estimation/EstimationProblem;>",
+            "207"
+        ]
+    ],
+    "fail_tcs": [
+        "org.apache.commons.math.estimation.GaussNewtonEstimatorTest.testBoundParameters"
+    ],
+    "covmat": "/single/Math-100.pkl"
+}
